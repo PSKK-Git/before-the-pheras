@@ -142,6 +142,47 @@ function FlagsmithCard({ fs }) {
 }
 
 /* ---------- ops: Sarvam health -> breaker -> NudgeBee (local stand-in) -> runbook ---------- */
+/* Live chain the judges watch: each step lights up as the incident flows through. */
+const TONE = {
+  ok: 'border-sage/50 bg-sage-soft text-sage',
+  bad: 'border-burgundy/40 bg-burgundy-soft text-burgundy',
+  warn: 'border-gold/50 bg-gold-soft text-[#8a6a2c]',
+  idle: 'border-line bg-white/60 text-muted',
+}
+function OpsFlow({ ready, inbox, fs }) {
+  const failing = ready && ready.breaker_state !== 'closed'
+  const top = inbox?.incidents?.[0]
+  const live = failing && top && Date.now() / 1000 - top.received_at < 600
+  const fsVoice = fs?.flags?.find((f) => f.name === 'voice_mode')?.enabled
+  const flipped = live && top.runbook_via === 'flagsmith'
+  const textMode = ready?.incident?.self_heal
+  const steps = [
+    { k: 'Sarvam voice', v: ready ? (ready.sarvam === 'ok' ? 'Healthy' : 'Failing') : '…', t: ready?.sarvam === 'ok' ? 'ok' : 'bad' },
+    { k: 'Circuit breaker', v: failing ? 'Open' : 'Closed', t: failing ? 'bad' : 'ok' },
+    { k: 'NudgeBee', v: live ? 'Incident raised' : 'Quiet', t: live ? 'warn' : 'idle' },
+    { k: 'Runbook', v: live && top.runbook_approved ? 'Approved' : live ? 'Awaiting approval' : 'Not needed', t: live && top.runbook_approved ? 'ok' : live ? 'warn' : 'idle' },
+    { k: 'Flagsmith voice_mode', v: flipped ? 'Turned off' : fsVoice === false ? 'Off' : 'On', t: flipped || fsVoice === false ? 'warn' : 'ok' },
+    { k: 'Couples see', v: textMode ? 'Text mode, nothing lost' : 'Voice on', t: textMode ? 'warn' : 'ok' },
+  ]
+  const active = !failing ? -1 : !live ? 1 : !top.runbook_approved ? 3 : !flipped ? 3 : 5
+  return (
+    <div className="card !p-3">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Live incident chain</div>
+      <div className="flex flex-wrap items-stretch gap-1.5">
+        {steps.map((st, i) => (
+          <div key={st.k} className="flex items-center gap-1.5">
+            <div className={`min-w-[104px] rounded-xl border px-2.5 py-2 transition-colors duration-500 ${TONE[st.t]} ${i === active ? 'animate-pulse ring-2 ring-current' : ''}`}>
+              <div className="text-[10px] font-semibold uppercase tracking-wide opacity-80">{st.k}</div>
+              <div className="text-sm font-bold leading-tight">{st.v}</div>
+            </div>
+            {i < steps.length - 1 && <span className="text-muted" aria-hidden="true">→</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function Ops({ onBack }) {
   const [ready, setReady] = useState(null)
   const [inbox, setInbox] = useState(null)
@@ -162,6 +203,7 @@ function Ops({ onBack }) {
         <h1 className="font-serif text-2xl text-burgundy">Ops &amp; incident demo</h1>
         <button className="btn btn-ghost text-sm" onClick={onBack}>← Back</button>
       </div>
+      <OpsFlow ready={ready} inbox={inbox} fs={fs} />
       <div className="card space-y-2 text-sm">
         <div className="flex flex-wrap gap-2">
           <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${ok ? 'border-sage/40 bg-sage-soft text-sage' : 'border-burgundy/30 bg-burgundy-soft text-burgundy'}`}>Sarvam: {ready?.sarvam ?? '…'}</span>
