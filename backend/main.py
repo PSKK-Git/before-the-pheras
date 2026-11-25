@@ -52,7 +52,9 @@ def _on_open():
 
 def _on_close():
     flags.ops_override(False)
-    incident.update(self_heal=False)
+    if incident.get("runbook_via") == "flagsmith":   # undo the runbook in Flagsmith itself
+        threading.Thread(target=lambda: flags.admin_set_flag("voice_mode", True), daemon=True).start()
+    incident.update(self_heal=False, runbook_via=None)
 
 
 sarvam.breaker.on_open = _on_open
@@ -68,8 +70,14 @@ def me(token: str | None, session_id: str | None = None) -> dict:
     return p
 
 
-def topic_list():
-    return flags.topics()
+def topic_list(session_id: str | None = None):
+    """The whole topic bank, or (with a session) the topics that couple chose, in their order."""
+    bank = flags.topics()
+    if not session_id:
+        return bank
+    ids = db.session_topics(session_id) or flags.DEFAULT_TOPIC_IDS
+    by_id = {t["id"]: t for t in bank}
+    return [by_id[i] for i in ids if i in by_id] or [by_id[i] for i in flags.DEFAULT_TOPIC_IDS]
 
 
 _qcache: dict = {}
@@ -89,17 +97,28 @@ def localized(text: str, lang: str, i18n: dict | None = None) -> str:
     return _qcache[key]
 
 
+# Flagsmith multivariate `question_tone` (A/B): "gentle" adds a reassuring preface, "direct" asks plainly.
+GENTLE_PREFACE = {
+    "en-IN": "Take your time, there are no right or wrong answers. ",
+    "hi-IN": "आराम से सोचिए, कोई सही या गलत जवाब नहीं है। ",
+    "te-IN": "నెమ్మదిగా ఆలోచించండి, సరైన లేదా తప్పు సమాధానం అంటూ ఏదీ లేదు. ",
+}
+
+
 def current_question(p: dict) -> dict | None:
-    ts = topic_list()
+    ts = topic_list(p["session_id"])
     if p["topic_idx"] >= len(ts):
         return None
     t = ts[p["topic_idx"]]
+    tone = flags.get_for(p["id"], p["language"])["question_tone"]
     if p["pending_followup"]:
         text, kind = p["pending_followup"], "followup"
     else:
         text, kind = localized(t["question"], p["language"], t.get("question_i18n")), "question"
+        if tone == "gentle":
+            text = GENTLE_PREFACE.get(p["language"], "") + text
     return {"topic": t["id"], "index": p["topic_idx"], "total": len(ts), "kind": kind, "text": text,
-            "stance_options": t["stance_options"]}
+            "tone": tone, "stance_options": t["stance_options"]}
 
 
 def public_view(pos: dict) -> dict:
@@ -115,9 +134,19 @@ class JoinIn(BaseModel):
     language: str = "en-IN"
 
 
+class NewSession(BaseModel):
+    topics: list[str] | None = None   # the 3 topics the couple chose from the research-backed bank
+
+
 @app.post("/sessions")
-def create_session():
-    return db.create_session()
+def create_session(body: NewSession | None = None):
+    topics = None
+    if body and body.topics:
+        bank = {t["id"] for t in flags.topics()}
+        topics = list(dict.fromkeys(t for t in body.topics if t in bank))
+        if not 1 <= len(topics) <= 5:
+            raise HTTPException(400, "choose between 1 and 5 topics")
+    return db.create_session(topics)
 
 
 @app.post("/sessions/join")
@@ -141,8 +170,14 @@ def config(x_participant_token: str | None = Header(None)):
         "voice_mode": f["voice_mode"],
         "text_fallback": f["text_fallback"],
         "tts_replies": f["tts_replies"],
+        "ai_followups": f["ai_followups"],
+        "max_followups": f["max_followups"],
+        "question_tone": f["question_tone"],
+        "segment_evaluated": bool(f.get("segment_evaluated")),
+        "flag_mode": flags.status.get("mode", "off"),
         "enabled_languages": [{"code": c, "name": flags.LANGS[c]} for c in f["enabled_languages"]],
-        "topics": [{"id": t["id"], "question": t["question"]} for t in f["interview_topics"]],
+        "topics": [{k: t.get(k) for k in ("id", "question", "category", "why", "source")} for t in f["interview_topics"]],
+        "default_topics": flags.DEFAULT_TOPIC_IDS,
         "source": f["source"],
         "override_active": f["override_active"],
         "voice_available": bool(f["voice_mode"] and ready_),
@@ -161,9 +196,9 @@ def my_state(session_id: str, x_participant_token: str | None = Header(None)):
         "question": current_question(p),
         "partner_joined": bool(others),
         "partner_synthetic": bool(others and others[0]["is_seeded"]),
-        "stance_options": {t["id"]: t["stance_options"] for t in topic_list()},
+        "stance_options": {t["id"]: t["stance_options"] for t in topic_list(p["session_id"])},
         "positions": db.positions_of(p["id"]),   # own data only, all statuses
-        "done": p["topic_idx"] >= len(topic_list()),
+        "done": p["topic_idx"] >= len(topic_list(p["session_id"])),
     }
 
 
@@ -182,7 +217,7 @@ async def answer(
     if answer_id in log:                       # idempotent: repeat returns same result, no advance
         return log[answer_id]
 
-    ts = topic_list()
+    ts = topic_list(p["session_id"])
     if redo_topic:                             # user re-answers a topic (state saved first)
         idx = next((i for i, t in enumerate(ts) if t["id"] == redo_topic), None)
         if idx is None:
@@ -221,12 +256,13 @@ async def answer(
     full = ((pos["transcript"] + "\n") if pos and pos["transcript"] else "") + transcript
     db.upsert_position(p["id"], topic["id"], transcript=full, review_status="pending")
 
-    # 3) at most ONE follow-up (separate interviewer call)
-    if not p["followup_used"]:
+    # 3) follow-ups (separate interviewer call): Flagsmith `ai_followups` is the kill switch and
+    #    `max_followups` (remote config, 0-2) caps how many per topic.
+    if f["ai_followups"] and (p["followup_used"] or 0) < f["max_followups"]:
         fu = extract.needs_followup(topic, full, p["language"])
         if fu:
             fu = localized(fu, p["language"]) if fu == topic.get("followup") else fu
-            db.update_participant(p["id"], followup_used=1, pending_followup=fu)
+            db.update_participant(p["id"], followup_used=(p["followup_used"] or 0) + 1, pending_followup=fu)
             return _remember(p, log, answer_id, {"transcript": transcript, "followup": fu, "topic": topic["id"]})
 
     # 4) extraction (separate call), stored as PENDING until the person approves
@@ -322,7 +358,7 @@ def conversation_map(session_id: str, x_participant_token: str | None = Header(N
     others = [o for o in db.session_participants(session_id) if o["id"] != p["id"]]
     other = others[0] if others else None
     out = []
-    for t in topic_list():
+    for t in topic_list(session_id):
         mine = db.position_for(p["id"], t["id"])
         mine = mine if mine and mine["review_status"] == "approved" else None
         theirs = db.position_for(other["id"], t["id"]) if other else None
@@ -469,12 +505,20 @@ def seed_partner_b(session_id: str, x_participant_token: str | None = Header(Non
             "Staying close to family matters a great deal to me, so moving to another city would be hard.",
             "Being near family matters a great deal."),
     }
-    for tid, (key, scale, imp, flex, nat, en, quote) in persona.items():
-        db.upsert_position(r["participant_id"], tid, stance_key=key, stance_scale=scale, importance=imp,
+    chosen = topic_list(session_id)
+    for t in chosen:
+        if t["id"] in persona:
+            key, scale, imp, flex, nat, en, quote = persona[t["id"]]
+        else:   # other bank topics: the persona leans to the most traditional option, clearly synthetic
+            opt = t["stance_options"][0]
+            key, scale, imp, flex = opt["key"], opt["scale"], 4, 2
+            en = f"(Synthetic) I lean towards: {opt['label'].lower()}."
+            nat, quote = en, opt["label"]
+        db.upsert_position(r["participant_id"], t["id"], stance_key=key, stance_scale=scale, importance=imp,
                            flexibility=flex, conditions=[], summary_native=nat, summary_english=en,
                            supporting_quote=quote, confidence=0.9, needs_clarification=False,
                            review_status="approved", approved_at=now, transcript="(synthetic persona)")
-    db.update_participant(r["participant_id"], topic_idx=len(persona))
+    db.update_participant(r["participant_id"], topic_idx=len(chosen))
     return {"seeded": True, "synthetic": True}
 
 
@@ -501,13 +545,23 @@ def standin_list():
 
 @app.post("/ops/nudgebee-standin/approve")
 def standin_approve():
-    """Operator approves the suggested runbook: voice off, text on (cleared when the breaker closes)."""
+    """Operator approves the suggested runbook: voice off, text on (undone when the breaker closes).
+    Preferred path: flip `voice_mode` in Flagsmith via its Admin API, so the change is visible in the
+    Flagsmith dashboard and audit log. Without an admin key, fall back to the labelled local override."""
     _demo_guard()
-    flags.ops_override(True)
-    incident["self_heal"] = True
+    via = "flagsmith" if flags.admin_set_flag("voice_mode", False) == "ok" else "local"
+    if via == "local":
+        flags.ops_override(True)
+    incident.update(self_heal=True, runbook_via=via)
     if standin_inbox:
-        standin_inbox[0]["runbook_approved"] = True
+        standin_inbox[0].update(runbook_approved=True, runbook_via=via)
     return ready()
+
+
+@app.get("/ops/flagsmith")
+def ops_flagsmith():
+    _demo_guard()
+    return flags.ops_snapshot()
 
 
 # optional: serve the built frontend from the same origin

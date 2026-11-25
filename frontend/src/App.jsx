@@ -80,6 +80,67 @@ function About({ onClose, onDelete, cfg, onOps }) {
   )
 }
 
+/* ---------- ops: live view of every Flagsmith feature this app uses ---------- */
+const FLAG_ROLE = {
+  voice_mode: 'Kill switch: voice answers (runbook target)',
+  text_fallback: 'Typed answers allowed',
+  tts_replies: 'Read questions aloud (segment: Indic languages)',
+  ai_followups: 'Kill switch: LLM follow-up questions',
+  max_followups: 'Remote config: follow-ups per topic',
+  question_tone: 'Multivariate A/B: gentle vs direct',
+  enabled_languages: 'Remote config: languages offered',
+  interview_topics: 'Remote config: questions & scales',
+}
+function FlagsmithCard({ fs }) {
+  const langs = Object.entries(fs.by_language || {})
+  const ab = fs.ab_split
+  const abTotal = ab ? Object.values(ab).reduce((a, b) => a + b, 0) : 0
+  return (
+    <div className="card space-y-3 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-serif text-lg text-burgundy">Flagsmith</h2>
+        <span className="text-xs text-muted">{fs.mode === 'local_evaluation' ? 'Local evaluation (server key, in-process)' : fs.mode} · source: {fs.source}</span>
+      </div>
+      <table className="w-full text-xs">
+        <tbody>
+          {fs.flags.map((f) => (
+            <tr key={f.name} className="border-t">
+              <td className="py-1 pr-2 font-mono">{f.name}</td>
+              <td className="py-1 pr-2">{f.value && !['interview_topics'].includes(f.name) ? f.value : <span className={f.enabled ? 'text-sage' : 'text-burgundy'}>{f.enabled ? 'on' : 'off'}</span>}</td>
+              <td className="py-1 text-muted">{FLAG_ROLE[f.name] || ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {langs.length > 0 && (
+        <div>
+          <div className="mb-1 text-xs font-semibold">Segments: same flags, evaluated per language trait</div>
+          <div className="flex flex-wrap gap-2">
+            {langs.map(([l, v]) => (
+              <span key={l} className="rounded-full border px-3 py-1 text-xs">{l}: read-aloud {v.tts_replies ? 'on' : 'off'} · voice {v.voice_mode ? 'on' : 'off'}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {ab && abTotal > 0 && (
+        <div>
+          <div className="mb-1 text-xs font-semibold">A/B test question_tone across {abTotal} sample identities</div>
+          <div className="flex h-3 overflow-hidden rounded-full border">
+            <div className="bg-sage" style={{ width: `${(ab.gentle / abTotal) * 100}%` }} />
+            <div className="bg-gold" style={{ width: `${(ab.direct / abTotal) * 100}%` }} />
+          </div>
+          <div className="mt-1 text-xs text-muted">gentle {ab.gentle} · direct {ab.direct}. Each participant keeps the same variant every time.</div>
+        </div>
+      )}
+      <p className="text-xs text-muted">
+        Runbook path: {fs.admin_api ? 'Flagsmith Admin API (flag change shows in the dashboard & audit log)' : 'local override (add an Admin API key to flip the real flag)'}
+        {fs.admin_error ? ` · last admin error: ${fs.admin_error}` : ''}
+        {fs.override_active ? ' · local override active' : ''}
+      </p>
+    </div>
+  )
+}
+
 /* ---------- ops: Sarvam health -> breaker -> NudgeBee (local stand-in) -> runbook ---------- */
 function Ops({ onBack }) {
   const [ready, setReady] = useState(null)
@@ -88,7 +149,9 @@ function Ops({ onBack }) {
   const load = useCallback(async () => {
     try { setReady(await api('/ready')) } catch {}
     try { setInbox(await api('/ops/nudgebee-standin')) } catch { setInbox({ incidents: [] }) }
+    try { setFs(await api('/ops/flagsmith')) } catch {}
   }, [])
+  const [fs, setFs] = useState(null)
   useEffect(() => { load(); const t = setInterval(load, 2000); return () => clearInterval(t) }, [load])
   const act = async (path, json) => { setBusy(true); try { await api(path, { method: 'POST', json }) } catch {} setBusy(false); load() }
   const ok = ready?.breaker_state === 'closed'
@@ -113,6 +176,7 @@ function Ops({ onBack }) {
           <button className="btn btn-ghost text-sm" disabled={busy} onClick={() => act('/admin/simulate-sarvam-failure', { on: false })}>Recover</button>
         </div>
       </div>
+      {fs && <FlagsmithCard fs={fs} />}
       <div className="card text-sm">
         <h2 className="mb-1 font-serif text-lg text-burgundy">NudgeBee inbox <span className="font-sans text-xs text-muted">(local stand-in)</span></h2>
         <p className="mb-3 text-xs text-muted">NudgeBee signup was unavailable, so incident signals go to a local receiver with the same content-free payload. Point NUDGEBEE_WEBHOOK_URL at a real NudgeBee endpoint to go live.</p>
@@ -124,7 +188,7 @@ function Ops({ onBack }) {
             <div className="mt-2 flex items-center justify-between gap-2">
               <span className="text-xs">Suggested runbook: {i.suggested_runbook}</span>
               {n === 0 && (i.runbook_approved
-                ? <span className="text-xs text-sage">✓ approved</span>
+                ? <span className="text-xs text-sage">✓ approved{i.runbook_via === 'flagsmith' ? ' · flipped in Flagsmith' : ' · local override'}</span>
                 : <button className="btn btn-primary !px-3 !py-1 text-xs" disabled={busy || ok} onClick={() => act('/ops/nudgebee-standin/approve')}>Approve runbook</button>)}
             </div>
           </div>
@@ -152,17 +216,55 @@ function Landing({ cfg, onJoined }) {
       setErr(e.status === 404 ? 'No session with that code.' : e.status === 409 ? 'That session already has two people.' : 'Something went wrong. Try again.')
     } finally { setBusy(false) }
   }
+  const [picking, setPicking] = useState(false)
+  const [picked, setPicked] = useState(null)
+  const bank = cfg?.topics || []
+  const chosen = picked || cfg?.default_topics || []
+  const toggle = (id) => setPicked(chosen.includes(id) ? chosen.filter((x) => x !== id) : chosen.length < 3 ? [...chosen, id] : chosen)
   const create = async () => {
     setBusy(true); setErr('')
-    try { const s = await api('/sessions', { method: 'POST' }); await join(s.join_code) }
+    try { const s = await api('/sessions', { method: 'POST', json: { topics: chosen } }); await join(s.join_code) }
     catch { setErr('Could not create a session.'); setBusy(false) }
   }
+
+  if (picking) return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="font-serif text-3xl text-burgundy">Choose the 3 conversations that matter to you</h1>
+        <p className="mt-2 text-sm text-muted">These are the topics Indian families most often leave unsaid. Each one is backed by research on where marriages run into friction. Your partner answers the same three.</p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {bank.map((t) => {
+          const on = chosen.includes(t.id)
+          return (
+            <button key={t.id} onClick={() => toggle(t.id)} aria-pressed={on}
+              className={`card !p-3 text-left transition ${on ? 'ring-2 ring-burgundy' : 'opacity-90 hover:opacity-100'}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">{t.category}</span>
+                <span className={`text-xs font-semibold ${on ? 'text-burgundy' : 'text-muted'}`}>{on ? '✓ chosen' : chosen.length >= 3 ? '' : '+ add'}</span>
+              </div>
+              <div className="mt-1 text-sm font-semibold">{t.question}</div>
+              <div className="mt-1.5 text-xs text-muted"><b>Why we ask:</b> {t.why}</div>
+              <div className="mt-1 text-[11px] italic text-muted">Source: {t.source}</div>
+            </button>
+          )
+        })}
+      </div>
+      {err && <p className="text-sm text-burgundy">{err}</p>}
+      <div className="flex gap-2">
+        <button className="btn btn-ghost" onClick={() => setPicking(false)}>Back</button>
+        <button className="btn btn-primary flex-1" disabled={busy || chosen.length !== 3} onClick={create}>
+          {chosen.length === 3 ? 'Start with these 3' : `Pick ${3 - chosen.length} more`}
+        </button>
+      </div>
+    </div>
+  )
 
   return (
     <div className="space-y-5">
       <div>
         <h1 className="font-serif text-4xl leading-tight text-burgundy">The conversations worth having before saying yes.</h1>
-        <p className="mt-3 text-muted">In a wedding you marry a household. Each of you answers three short questions privately, in your own language. You review what was understood, approve it, and only then see each other&rsquo;s approved answers side by side.</p>
+        <p className="mt-3 text-muted">In a wedding you marry a household. You pick three research-backed topics; each of you answers them privately, in your own language. You review what was understood, approve it, and only then see each other&rsquo;s approved answers side by side.</p>
       </div>
       <div className="card space-y-4">
         <div>
@@ -173,7 +275,7 @@ function Landing({ cfg, onJoined }) {
             ))}
           </div>
         </div>
-        <button className="btn btn-primary w-full" disabled={busy || !langs.length} onClick={create}>Start a new session</button>
+        <button className="btn btn-primary w-full" disabled={busy || !langs.length} onClick={() => setPicking(true)}>Start a new session</button>
         <div className="flex items-center gap-2 text-xs text-muted"><div className="h-px flex-1 bg-line" />or join your partner<div className="h-px flex-1 bg-line" /></div>
         <div className="flex gap-2">
           <input className="min-w-0 flex-1 rounded-full border border-line bg-white px-4 py-2.5 text-center font-semibold uppercase tracking-[.3em]" placeholder="CODE" maxLength={5} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} />
@@ -322,6 +424,7 @@ function Interview({ session, cfg, me, refresh, goMap, speak }) {
         <div className="card space-y-4">
           <div className="lbl">{q?.kind === 'followup' && !redo ? 'One more thing' : 'Your question'}</div>
           <p className="font-serif text-2xl leading-snug">{redo ? topicMeta(redo)?.question : q.text}</p>
+          {topicMeta(redo || q?.topic)?.why && <p className="text-xs text-muted"><b>Why we ask:</b> {topicMeta(redo || q?.topic).why}</p>}
           {cfg?.tts_replies && cfg.sarvam === 'ok' && q && <button className="btn btn-ghost !py-1.5 text-sm" onClick={() => speak(q.text, session.language)}>▶ Listen</button>}
           {lastTranscript && <p className="rounded-xl bg-ivory p-3 text-sm"><span className="lbl block">What we heard</span>{lastTranscript}</p>}
 

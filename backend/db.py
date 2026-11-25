@@ -47,13 +47,22 @@ def conn():
 def init():
     with conn() as c:
         c.executescript(SCHEMA)
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(sessions)")}
+        if "topics" not in cols:   # migration: topics the couple chose (JSON list of ids)
+            c.execute("ALTER TABLE sessions ADD COLUMN topics TEXT")
+
+
+def session_topics(session_id: str) -> list | None:
+    with conn() as c:
+        r = c.execute("SELECT topics FROM sessions WHERE id=?", (session_id,)).fetchone()
+    return json.loads(r["topics"]) if r and r["topics"] else None
 
 
 def _id() -> str:
     return secrets.token_urlsafe(9)
 
 
-def create_session() -> dict:
+def create_session(topics: list | None = None) -> dict:
     sid = _id()
     alphabet = string.ascii_uppercase.replace("O", "").replace("I", "") + "23456789"
     with conn() as c:
@@ -61,7 +70,8 @@ def create_session() -> dict:
             code = "".join(secrets.choice(alphabet) for _ in range(5))
             if not c.execute("SELECT 1 FROM sessions WHERE join_code=?", (code,)).fetchone():
                 break
-        c.execute("INSERT INTO sessions VALUES(?,?,?)", (sid, code, time.time()))
+        c.execute("INSERT INTO sessions(id, join_code, created_at, topics) VALUES(?,?,?,?)",
+                  (sid, code, time.time(), json.dumps(topics) if topics else None))
     return {"session_id": sid, "join_code": code}
 
 
