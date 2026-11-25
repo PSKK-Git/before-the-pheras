@@ -492,7 +492,14 @@ function MapView({ session, cfg, speak, goInterview }) {
   }, [session])
   useEffect(() => { load(); const t = setInterval(load, 3000); return () => clearInterval(t) }, [load])
 
-  const seed = async () => { try { await api(`/admin/seed-partner-b?session_id=${session.session_id}`, { method: 'POST', token: session.token }); load() } catch { setErr('Demo partner is not enabled on this server.') } }
+  const [seeding, setSeeding] = useState(false)
+  const seed = async () => {
+    if (seeding) return
+    setSeeding(true); setErr('')
+    try { await api(`/admin/seed-partner-b?session_id=${session.session_id}`, { method: 'POST', token: session.token }) }
+    catch (e) { if (e.status !== 409) setErr(e.status === 404 ? 'Demo partner is not enabled on this server.' : 'Could not add the demo partner. Try again.') }
+    await load(); setSeeding(false)
+  }
   const revoke = async (pos) => { await api(`/positions/${pos.id}/revoke`, { method: 'POST', token: session.token }); load() }
   const discussed = async (topic) => { await api(`/sessions/${session.session_id}/topics/${topic}/discussed`, { method: 'POST', token: session.token }); load() }
 
@@ -507,7 +514,7 @@ function MapView({ session, cfg, speak, goInterview }) {
       {!me.partner_joined && (
         <div className="card flex flex-wrap items-center justify-between gap-3 text-sm">
           <span>Waiting for your partner. Share code <b className="tracking-[.25em]">{me.join_code}</b>.</span>
-          <button className="btn btn-ghost !py-1.5" onClick={seed}>Add synthetic demo partner</button>
+          <button className="btn btn-ghost !py-1.5" disabled={seeding} onClick={seed}>{seeding ? 'Adding partner…' : 'Add synthetic demo partner'}</button>
         </div>
       )}
       {err && <p className="text-sm text-burgundy">{err}</p>}

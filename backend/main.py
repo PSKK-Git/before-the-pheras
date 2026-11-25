@@ -400,7 +400,7 @@ def conversation_map(session_id: str, x_participant_token: str | None = Header(N
             if ck not in _scache:
                 a, b = ((mine, theirs) if p["role"] == "A" else (theirs, mine))
                 _scache[ck] = extract.suggest_question(t, a["summary_english"], b["summary_english"])
-            row["suggested_question"] = _scache[ck]
+            row["suggested_question"] = localized(_scache[ck], p["language"])   # in the viewer's language (cached)
         out.append(row)
     return {"language": p["language"], "partner_synthetic": bool(other and other["is_seeded"]),
             "badge": "Only approved answers are shown", "topics": out,
