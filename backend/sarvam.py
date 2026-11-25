@@ -17,7 +17,9 @@ import httpx
 
 BASE = os.getenv("SARVAM_BASE_URL", "https://api.sarvam.ai")
 STT_MODEL = os.getenv("SARVAM_STT_MODEL", "saaras:v4")
-CHAT_MODEL = os.getenv("SARVAM_CHAT_MODEL", "sarvam-105b")
+# sarvam-105b spends its whole token budget on hidden reasoning and returns empty content for short
+# JSON tasks; the conversations variant answers directly (no reasoning tokens), faster and cheaper.
+CHAT_MODEL = os.getenv("SARVAM_CHAT_MODEL", "sarvam-105b-conversations")
 TTS_MODEL = os.getenv("SARVAM_TTS_MODEL", "bulbul:v3")
 TTS_SPEAKER = os.getenv("SARVAM_TTS_SPEAKER", "shubh")
 TRANSLATE_MODEL = os.getenv("SARVAM_TRANSLATE_MODEL", "sarvam-translate:v1")
@@ -184,7 +186,7 @@ def chat(system: str, user: str, max_tokens: int = 700) -> str:
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 "temperature": 0.2,
                 "max_tokens": max_tokens,
-                "reasoning_effort": "low",
+                **({"reasoning_effort": "low"} if CHAT_MODEL == "sarvam-105b" else {}),
             },
             timeout=TIMEOUTS["chat"],
         )

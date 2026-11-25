@@ -34,12 +34,25 @@ class Extraction(BaseModel):
         return [str(x) for x in v][:6] if isinstance(v, list) else []
 
 
+def _repair(s: str) -> str:
+    """The chat model sometimes leaves long string values (e.g. Telugu summaries) unquoted.
+    Quote any value that is not already JSON, then fix up missing/trailing commas."""
+    def q(m):
+        return f'"{m.group(1)}": {json.dumps(m.group(2).strip().rstrip(","))},'
+    s = re.sub(r'"(\w+)":[ \t]*(?![ \t"\[{\-\d]|true\b|false\b|null\b)([^\n]+)', q, s)
+    s = re.sub(r'(["\d\]}]|true|false|null)[ \t]*\n(\s*")', r"\1,\n\2", s)
+    return re.sub(r",(\s*[}\]])", r"\1", s)
+
+
 def _json_from(text: str) -> dict:
     text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
     m = re.search(r"\{.*\}", text, flags=re.S)
     if not m:
         raise ValueError("no json")
-    return json.loads(m.group(0))
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return json.loads(_repair(m.group(0)))
 
 
 def _looks_unsure(t: str) -> bool:
@@ -81,6 +94,7 @@ def extract(topic: dict, transcript: str, lang: str) -> dict:
         "needs_clarification(bool). stance_key MUST be one of: "
         + ", ".join(f"{k}={s}" for k, s in opts.items())
         + ". If the person says they are unsure, set needs_clarification=true and confidence<=0.4; do not force a stance."
+        " Output strict JSON: every string value in double quotes, no markdown."
     )
     user = f"topic: {topic['id']}\nquestion: {topic['question']}\nanswer: {transcript}"
     for attempt in range(2):
