@@ -543,7 +543,7 @@ function MapView({ session, cfg, speak, goInterview }) {
               <div className="lbl mb-1">A way to start talking</div>
               <p className="font-serif text-lg">{t.suggested_question}</p>
               <div className="mt-2 flex gap-2">
-                {cfg?.tts_replies && cfg.sarvam === 'ok' && <button className="btn btn-ghost !py-1.5 text-sm" onClick={() => speak(t.suggested_question, 'en-IN')}>▶ Listen</button>}
+                {cfg?.tts_replies && cfg.sarvam === 'ok' && <button className="btn btn-ghost !py-1.5 text-sm" onClick={() => speak(t.suggested_question, session.language)}>▶ Listen</button>}
                 <button className="btn btn-ghost !py-1.5 text-sm" onClick={() => discussed(t.topic)}>{t.discussed ? '✓ Discussed' : 'Mark as discussed'}</button>
               </div>
             </div>
