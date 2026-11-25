@@ -94,6 +94,7 @@ def extract(topic: dict, transcript: str, lang: str) -> dict:
         "needs_clarification(bool). stance_key MUST be one of: "
         + ", ".join(f"{k}={s}" for k, s in opts.items())
         + ". If the person says they are unsure, set needs_clarification=true and confidence<=0.4; do not force a stance."
+        " Write both summaries in the first person, as the speaker ('I would like...'), never 'The person'."
         " Output strict JSON: every string value in double quotes, no markdown."
     )
     user = f"topic: {topic['id']}\nquestion: {topic['question']}\nanswer: {transcript}"
@@ -105,7 +106,7 @@ def extract(topic: dict, transcript: str, lang: str) -> dict:
                 raise ValueError("bad stance_key")
             d = e.model_dump()
             d["stance_scale"] = opts[e.stance_key]    # scale is authoritative from topic config
-            d["topic"] = topic["id"]
+            d.pop("topic", None)                      # caller passes the topic itself (same shape as offline path)
             return d
         except (ValidationError, ValueError, json.JSONDecodeError, KeyError):
             continue
