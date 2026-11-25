@@ -160,6 +160,7 @@ def my_state(session_id: str, x_participant_token: str | None = Header(None)):
         "question": current_question(p),
         "partner_joined": bool(others),
         "partner_synthetic": bool(others and others[0]["is_seeded"]),
+        "stance_options": {t["id"]: t["stance_options"] for t in topic_list()},
         "positions": db.positions_of(p["id"]),   # own data only, all statuses
         "done": p["topic_idx"] >= len(topic_list()),
     }
