@@ -264,6 +264,7 @@ function Landing({ cfg, onJoined }) {
     <div className="space-y-5">
       <div>
         <h1 className="font-serif text-4xl leading-tight text-burgundy">The conversations worth having before saying yes.</h1>
+        <p className="mt-3 rounded-xl border border-burgundy/20 bg-burgundy-soft px-3 py-2 text-sm font-semibold text-burgundy">Families spend months finding out what really matters to each other. Surface the deal-breakers in week one, not after the engagement.</p>
         <p className="mt-3 text-muted">In a wedding you marry a household. You pick three research-backed topics; each of you answers them privately, in your own language. You review what was understood, approve it, and only then see each other&rsquo;s approved answers side by side.</p>
       </div>
       <div className="card space-y-4">

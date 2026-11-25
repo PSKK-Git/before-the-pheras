@@ -6,6 +6,20 @@ In an Indian wedding you marry a household. In arranged matches, couples often m
 
 > A conversation starter, **not a compatibility score**. We never rate, predict or advise on whether to marry.
 
+## The key point: surface the deal-breakers in week one, not month six
+
+**The problem we solve is communication, and the time lost to it.**
+
+- Today, couples and families spend **months** of meetings, calls and family visits before the real questions come out. Will we live with your parents? Does my career move or yours? How much goes to each family every month? When do we want children?
+- Often these only surface **after the engagement or after the wedding**, when changing course costs everyone far more: emotionally, socially and financially.
+- Before the Pheras puts those questions **at the start**. In about 15 minutes each, privately and in their own language, both people know where they **agree**, where they **need to talk**, and where there is an **important difference**: a potential deal-breaker.
+- **This saves time for everyone.** The couple, both families and matchmakers spend the following months on the conversations that matter, instead of discovering them too late.
+- We **don't** decide for anyone. An "Important difference" isn't a verdict. It's the conversation you'd otherwise have had six months later, now, while it's still easy to have.
+
+Why we believe this works: premarital education research shows the clearest, most reliable gain is in **communication** ([Carroll & Doherty, 2003](https://scholarsarchive.byu.edu/facpub/4333); [Fawcett et al., 2010](https://scholarsarchive.byu.edu/facpub/4230)). That's precisely the skill this app exercises, and it does so at the moment it saves the most time.
+
+**One-line pitch:** *"Families take months to find out what really matters to each other. Before the Pheras gets the deal-breakers on the table in week one, privately, in your own language, and leaves the decision to you."*
+
 ## What's new here
 
 | Today | Before the Pheras |
@@ -55,9 +69,10 @@ The couple picks 3 of 8 topics. Each topic shows a "why we ask" note and its sou
 
 ## Demo script (about 3 minutes)
 
+0. **Open with the key point (20 s):** "Families spend months finding out what really matters to each other, and often find the deal-breakers after the engagement. We put those conversations in week one."
 1. **Landing:** pick a language, then **Start a new session**, then choose 3 topics. Point at the "why we ask" notes.
 2. **Interview:** answer one question by voice and two by typing. Show the review screen: "here is what we understood", edit if needed, then **Approve & share**.
-3. **Map:** click **Add synthetic demo partner**. Show Aligned / Needs discussion / Important difference, the explanation for each, and the suggested opening question. Stress: no score.
+3. **Map:** click **Add synthetic demo partner**. Show Aligned / Needs discussion / Important difference, the explanation for each, and the suggested opening question. Stress: no score. Point at the **Important difference** on career relocation: "This is the deal-breaker conversation this couple would otherwise have had months later. They're having it on day one."
 4. **Ops** (ⓘ → Ops demo): **Simulate Sarvam voice failure**. The breaker opens, the incident appears in the NudgeBee inbox, and **Approve runbook** flips `voice_mode` in Flagsmith, so the app switches to text mode. Then **Recover**. Show the Flagsmith panel: flags, segment per language, the A/B split.
 
 ## Business
