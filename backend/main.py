@@ -133,8 +133,9 @@ def join(body: JoinIn):
 
 
 @app.get("/config")
-def config():
-    f = flags.get_all()
+def config(x_participant_token: str | None = Header(None)):
+    p = db.participant_by_token(x_participant_token or "")
+    f = flags.get_for(p["id"], p["language"]) if p else flags.get_all()
     ready_ = sarvam.configured() and sarvam.breaker.current() != "open"
     return {
         "voice_mode": f["voice_mode"],
@@ -192,7 +193,7 @@ async def answer(
     if p["topic_idx"] >= len(ts):
         return {"done": True}
     topic = ts[p["topic_idx"]]
-    f = flags.get_all()
+    f = flags.get_for(p["id"], p["language"])
 
     # 1) transcript: voice (Sarvam STT) or text
     if audio is not None:
@@ -361,8 +362,8 @@ class TtsIn(BaseModel):
 
 @app.post("/tts")
 def speak(body: TtsIn, x_participant_token: str | None = Header(None)):
-    me(x_participant_token)
-    if not flags.get_all()["tts_replies"]:
+    p = me(x_participant_token)
+    if not flags.get_for(p["id"], p["language"])["tts_replies"]:
         raise HTTPException(403, "tts disabled")
     try:
         return Response(sarvam.tts(body.text, body.language), media_type="audio/wav")
@@ -439,7 +440,7 @@ def reload_env():
     except Exception:
         raise HTTPException(500, "could not read .env")
     sarvam.reset_keys()
-    flags._cache["t"] = 0
+    flags.reset_client()
     return {"sarvam_keys_loaded": len(sarvam.keys())}
 
 

@@ -90,7 +90,7 @@ def _get_client():
     try:
         from flagsmith import Flagsmith
 
-        kw = {"environment_key": key, "request_timeout_seconds": 2, "retries": 0}
+        kw = {"environment_key": key, "request_timeout_seconds": 2, "retries": 0, "enable_analytics": True}
         if os.getenv("FLAGSMITH_API_URL"):
             kw["api_url"] = os.getenv("FLAGSMITH_API_URL")
         _client = Flagsmith(**kw)
@@ -98,6 +98,13 @@ def _get_client():
         log.warning("flagsmith init failed: %s", type(e).__name__)
         status["last_error"] = type(e).__name__
     return _client
+
+
+def reset_client():
+    """Re-create the Flagsmith client (e.g. after the key in .env changed)."""
+    global _client, _client_tried
+    _client, _client_tried = None, False
+    _cache["t"] = 0
 
 
 def _merge_topics(remote):
@@ -162,6 +169,38 @@ def get_all(force: bool = False) -> dict:
             status.update(flagsmith="degraded", last_error=type(e).__name__)
     _cache.update(t=now, val=val)
     return _apply_override(val)
+
+
+_id_cache: dict = {}
+
+
+def get_for(participant_id: str, language: str) -> dict:
+    """Per-participant flags via Flagsmith identities + segments (e.g. a "language = te-IN" segment).
+    Identifier is the random participant id; the ONLY trait is language. No names, answers or contact data.
+    Falls back to environment-level flags if identity evaluation is unavailable."""
+    base = get_all()
+    c = _get_client()
+    if not c or base.get("source") != "flagsmith":
+        return base
+    hit = _id_cache.get(participant_id)
+    now = time.time()
+    if hit and now - hit[0] < CACHE_TTL:
+        return _apply_override({**base, **hit[1]})
+    per = {}
+    try:
+        fl = c.get_identity_flags(identifier=participant_id, traits={"language": language})
+        for name in ("voice_mode", "text_fallback", "tts_replies"):
+            try:
+                per[name] = bool(fl.is_feature_enabled(name))
+            except Exception:
+                pass
+        per["segment_evaluated"] = True
+    except Exception:
+        per = {}
+    if len(_id_cache) > 500:
+        _id_cache.clear()
+    _id_cache[participant_id] = (now, per)
+    return _apply_override({**base, **per})
 
 
 def _apply_override(val):
