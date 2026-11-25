@@ -590,11 +590,14 @@ export default function App() {
     store.set(null); setSession(null); setMe(null); setAbout(false)
   }
 
+  // Leave this session on this device (to start another, e.g. in a different language). Data stays until deleted via ⓘ.
+  const leave = () => { store.set(null); setSession(null); setMe(null); setScreen('interview') }
   const nav = session && (
     <div className="flex gap-1">
       {['interview', 'map'].map((s) => (
         <button key={s} onClick={() => setScreen(s)} className={`btn !px-3 !py-1.5 text-sm ${screen === s ? 'btn-primary' : 'btn-ghost'}`}>{s === 'map' ? 'Map' : 'Interview'}</button>
       ))}
+      <button onClick={leave} className="btn btn-ghost !px-3 !py-1.5 text-sm" title="Leave this session and start a new one">New</button>
     </div>
   )
 

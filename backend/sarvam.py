@@ -166,7 +166,8 @@ def transcribe(audio: bytes, filename: str, mime: str, language: str) -> str:
         r = httpx.post(
             f"{BASE}/speech-to-text",
             headers=_headers(),
-            files={"file": (filename or "audio.webm", audio, mime or "audio/webm")},
+            # Browsers send e.g. "audio/webm;codecs=opus"; Sarvam rejects parameters, so send the bare type.
+            files={"file": (filename or "audio.webm", audio, (mime or "audio/webm").split(";")[0].strip())},
             data={"model": STT_MODEL, "mode": "transcribe", "language_code": language},
             timeout=TIMEOUTS["stt"],
         )
