@@ -33,7 +33,11 @@ Why we believe this works: premarital education research shows the clearest, mos
 
 ## Research-backed topics
 
-The couple picks 3 of 8 topics. Each topic shows a "why we ask" note and its source in the app (`backend/flags.py`, `TOPIC_NOTES`):
+The couple starts with **3 of 8 topics (up to 5)**, and can **add up to 2 questions of their own**: the deal-breaker that isn't on any list. Each research topic shows a "why we ask" note and its source in the app (`backend/flags.py`, `TOPIC_NOTES`).
+
+**Why start with 3:** finishing matters more than coverage. Three topics take about 15 minutes each, it keeps the focus on what matters most to *this* couple, and it saves AI cost per session. Couples who want more can pick up to 5.
+
+**Custom questions** use a simple scale (Yes, fully / Mostly yes, with conditions / Unsure, need to talk / No), so the AI extraction, the fixed comparison rules and the conversation map work for them exactly as for the research topics.
 
 | Topic | Why we ask |
 |---|---|
@@ -70,7 +74,7 @@ The couple picks 3 of 8 topics. Each topic shows a "why we ask" note and its sou
 ## Demo script (about 3 minutes)
 
 0. **Open with the key point (20 s):** "Families spend months finding out what really matters to each other, and often find the deal-breakers after the engagement. We put those conversations in week one."
-1. **Landing:** pick a language, then **Start a new session**, then choose 3 topics. Point at the "why we ask" notes.
+1. **Landing:** pick a language, then **Start a new session**, then choose 3 topics. Point at the "why we ask" notes, and add one question of your own (e.g. "Will you be okay with my parents living with us when they are older?").
 2. **Interview:** answer one question by voice and two by typing. Show the review screen: "here is what we understood", edit if needed, then **Approve & share**.
 3. **Map:** click **Add synthetic demo partner**. Show Aligned / Needs discussion / Important difference, the explanation for each, and the suggested opening question. Stress: no score. Point at the **Important difference** on career relocation: "This is the deal-breaker conversation this couple would otherwise have had months later. They're having it on day one."
 4. **Ops** (ⓘ → Ops demo): **Simulate Sarvam voice failure**. The breaker opens, the incident appears in the NudgeBee inbox, and **Approve runbook** flips `voice_mode` in Flagsmith, so the app switches to text mode. Then **Recover**. Show the Flagsmith panel: flags, segment per language, the A/B split.

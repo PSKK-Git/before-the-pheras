@@ -220,18 +220,28 @@ function Landing({ cfg, onJoined }) {
   const [picked, setPicked] = useState(null)
   const bank = cfg?.topics || []
   const chosen = picked || cfg?.default_topics || []
-  const toggle = (id) => setPicked(chosen.includes(id) ? chosen.filter((x) => x !== id) : chosen.length < 3 ? [...chosen, id] : chosen)
+  const [custom, setCustom] = useState([])
+  const [draft, setDraft] = useState('')
+  const MAX = 5
+  const total = chosen.length + custom.length
+  const toggle = (id) => setPicked(chosen.includes(id) ? chosen.filter((x) => x !== id) : total < MAX ? [...chosen, id] : chosen)
+  const addCustom = () => {
+    const q = draft.trim().replace(/\s+/g, ' ')
+    if (q.length < 8) { setErr('Write a full question (at least 8 characters).'); return }
+    if (custom.length >= 2 || total >= MAX || custom.includes(q)) return
+    setCustom([...custom, q]); setDraft(''); setErr('')
+  }
   const create = async () => {
     setBusy(true); setErr('')
-    try { const s = await api('/sessions', { method: 'POST', json: { topics: chosen } }); await join(s.join_code) }
-    catch { setErr('Could not create a session.'); setBusy(false) }
+    try { const s = await api('/sessions', { method: 'POST', json: { topics: chosen, custom } }); await join(s.join_code) }
+    catch (e) { setErr(e.message && e.status === 400 ? e.message : 'Could not create a session.'); setBusy(false) }
   }
 
   if (picking) return (
     <div className="space-y-4">
       <div>
-        <h1 className="font-serif text-3xl text-burgundy">Choose the 3 conversations that matter to you</h1>
-        <p className="mt-2 text-sm text-muted">These are the topics Indian families most often leave unsaid. Each one is backed by research on where marriages run into friction. Your partner answers the same three.</p>
+        <h1 className="font-serif text-3xl text-burgundy">Choose the conversations that matter to you</h1>
+        <p className="mt-2 text-sm text-muted">Start with 3 (up to 5). These are the topics Indian families most often leave unsaid, each backed by research on where marriages run into friction. You can also add your own question. Your partner answers the same ones.</p>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
         {bank.map((t) => {
@@ -241,7 +251,7 @@ function Landing({ cfg, onJoined }) {
               className={`card !p-3 text-left transition ${on ? 'ring-2 ring-burgundy' : 'opacity-90 hover:opacity-100'}`}>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold uppercase tracking-wide text-muted">{t.category}</span>
-                <span className={`text-xs font-semibold ${on ? 'text-burgundy' : 'text-muted'}`}>{on ? '✓ chosen' : chosen.length >= 3 ? '' : '+ add'}</span>
+                <span className={`text-xs font-semibold ${on ? 'text-burgundy' : 'text-muted'}`}>{on ? '✓ chosen' : total >= MAX ? '' : '+ add'}</span>
               </div>
               <div className="mt-1 text-sm font-semibold">{t.question}</div>
               <div className="mt-1.5 text-xs text-muted"><b>Why we ask:</b> {t.why}</div>
@@ -250,11 +260,29 @@ function Landing({ cfg, onJoined }) {
           )
         })}
       </div>
+      <div className="card space-y-2 !p-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted">Your own question</div>
+        <p className="text-xs text-muted">Something that's a deal-breaker for you and isn't above. Ask it so it can be answered yes, no, or "it depends". Up to 2.</p>
+        {custom.map((q) => (
+          <div key={q} className="flex items-start justify-between gap-2 rounded-xl bg-burgundy-soft px-3 py-2 text-sm">
+            <span className="min-w-0 break-words">{q}</span>
+            <button className="text-xs font-semibold text-burgundy" onClick={() => setCustom(custom.filter((x) => x !== q))} aria-label={`Remove ${q}`}>Remove</button>
+          </div>
+        ))}
+        {custom.length < 2 && total < MAX && (
+          <div className="flex gap-2">
+            <input id="custom-question" className="min-w-0 flex-1 rounded-full border border-line bg-white px-4 py-2 text-sm" maxLength={200}
+              placeholder="e.g. Will you be okay with my parents living with us later?" value={draft}
+              onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addCustom() }} />
+            <button className="btn btn-ghost text-sm" disabled={!draft.trim()} onClick={addCustom}>Add</button>
+          </div>
+        )}
+      </div>
       {err && <p className="text-sm text-burgundy">{err}</p>}
       <div className="flex gap-2">
         <button className="btn btn-ghost" onClick={() => setPicking(false)}>Back</button>
-        <button className="btn btn-primary flex-1" disabled={busy || chosen.length !== 3} onClick={create}>
-          {chosen.length === 3 ? 'Start with these 3' : `Pick ${3 - chosen.length} more`}
+        <button className="btn btn-primary flex-1" disabled={busy || total < 3} onClick={create}>
+          {total >= 3 ? `Start with these ${total}` : `Pick ${3 - total} more`}
         </button>
       </div>
     </div>
@@ -265,7 +293,7 @@ function Landing({ cfg, onJoined }) {
       <div>
         <h1 className="font-serif text-4xl leading-tight text-burgundy">The conversations worth having before saying yes.</h1>
         <p className="mt-3 rounded-xl border border-burgundy/20 bg-burgundy-soft px-3 py-2 text-sm font-semibold text-burgundy">Families spend months finding out what really matters to each other. Surface the deal-breakers in week one, not after the engagement.</p>
-        <p className="mt-3 text-muted">In a wedding you marry a household. You pick three research-backed topics; each of you answers them privately, in your own language. You review what was understood, approve it, and only then see each other&rsquo;s approved answers side by side.</p>
+        <p className="mt-3 text-muted">In a wedding you marry a household. You pick three to five research-backed topics, or add your own question; each of you answers them privately, in your own language. You review what was understood, approve it, and only then see each other&rsquo;s approved answers side by side.</p>
       </div>
       <div className="card space-y-4">
         <div>
@@ -396,7 +424,7 @@ function Interview({ session, cfg, me, refresh, goMap, speak }) {
   if (!q && !reviewTarget) {
     return (
       <div className="card space-y-3 text-center">
-        <h2 className="font-serif text-2xl text-burgundy">All three topics done</h2>
+        <h2 className="font-serif text-2xl text-burgundy">All topics done</h2>
         <p className="text-muted">Approved answers go to your Conversation Map. You can still edit or revoke any of them there.</p>
         <button className="btn btn-primary" onClick={goMap}>Open Conversation Map</button>
       </div>

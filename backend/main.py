@@ -77,7 +77,25 @@ def topic_list(session_id: str | None = None):
         return bank
     ids = db.session_topics(session_id) or flags.DEFAULT_TOPIC_IDS
     by_id = {t["id"]: t for t in bank}
-    return [by_id[i] for i in ids if i in by_id] or [by_id[i] for i in flags.DEFAULT_TOPIC_IDS]
+    out = [custom_topic(i) if isinstance(i, dict) else by_id.get(i) for i in ids]
+    return [t for t in out if t] or [by_id[i] for i in flags.DEFAULT_TOPIC_IDS]
+
+
+# A couple's own question. A yes/no-style scale lets extraction, comparison and the map work unchanged.
+CUSTOM_SCALE = [
+    {"key": "yes_fully", "scale": 1, "label": "Yes, fully"},
+    {"key": "yes_with_conditions", "scale": 2, "label": "Mostly yes, with conditions"},
+    {"key": "unsure_need_to_talk", "scale": 3, "label": "Unsure, need to talk"},
+    {"key": "no", "scale": 4, "label": "No"},
+]
+
+
+def custom_topic(c: dict) -> dict:
+    return {"id": c["id"], "question": c["question"], "question_i18n": {}, "custom": True,
+            "category": "Your question", "why": "You added this question yourselves.", "source": "Your own question",
+            "followup": "Could you say a bit more about why you feel that way?",
+            "default_opening": "What would each of you need to feel good about this?",
+            "stance_options": CUSTOM_SCALE}
 
 
 _qcache: dict = {}
@@ -135,17 +153,24 @@ class JoinIn(BaseModel):
 
 
 class NewSession(BaseModel):
-    topics: list[str] | None = None   # the 3 topics the couple chose from the research-backed bank
+    topics: list[str] | None = None   # topics the couple chose from the research-backed bank
+    custom: list[str] | None = None   # up to 2 questions of their own
 
 
 @app.post("/sessions")
 def create_session(body: NewSession | None = None):
     topics = None
-    if body and body.topics:
+    if body and (body.topics or body.custom):
         bank = {t["id"] for t in flags.topics()}
-        topics = list(dict.fromkeys(t for t in body.topics if t in bank))
+        topics = list(dict.fromkeys(t for t in (body.topics or []) if t in bank))
+        for n, q in enumerate(dict.fromkeys(" ".join((q or "").split()) for q in (body.custom or [])), 1):
+            if not 8 <= len(q) <= 200:
+                raise HTTPException(400, "a custom question must be 8 to 200 characters")
+            if n > 2:
+                raise HTTPException(400, "at most 2 custom questions")
+            topics.append({"id": f"custom_{n}", "question": q})
         if not 1 <= len(topics) <= 5:
-            raise HTTPException(400, "choose between 1 and 5 topics")
+            raise HTTPException(400, "choose between 1 and 5 topics in total")
     return db.create_session(topics)
 
 
@@ -302,7 +327,7 @@ def patch_position(pos_id: str, body: PatchIn, x_participant_token: str | None =
     p, pos = _own_position(pos_id, x_participant_token)
     upd = {k: v for k, v in body.model_dump().items() if v is not None}
     if "stance_key" in upd:
-        topic = next(t for t in topic_list() if t["id"] == pos["topic"])
+        topic = next(t for t in topic_list(p["session_id"]) if t["id"] == pos["topic"])
         opts = {o["key"]: o["scale"] for o in topic["stance_options"]}
         if upd["stance_key"] not in opts:
             raise HTTPException(400, "invalid stance")
