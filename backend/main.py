@@ -391,6 +391,8 @@ def ready():
         "error_counts": dict(sarvam.error_counts),
         "p95_latency": sarvam.p95_latency_ms(),
         "simulated_failure": sarvam.simulate["on"],
+        "sarvam_keys_loaded": len(sarvam.keys()),   # a count only, never the keys
+        "sarvam_usage": dict(sarvam.usage),         # successful calls, to watch the credit budget
         "incident": incident,
     }
 
@@ -423,6 +425,22 @@ def simulate_failure(body: SimIn):
         sarvam.breaker.success()   # recovery: close breaker; on_close clears the local override
         incident.update(nudgebee_signal=None, at=None)
     return ready()
+
+
+@app.post("/admin/reload-env")
+def reload_env():
+    """DEMO ONLY: re-read backend/../.env (override) so a new Sarvam key can be swapped without a restart."""
+    _demo_guard()
+    try:
+        for line in (Path(__file__).parent.parent / ".env").read_text().splitlines():
+            if line.strip() and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ[k.strip()] = v.split("#")[0].strip()
+    except Exception:
+        raise HTTPException(500, "could not read .env")
+    sarvam.reset_keys()
+    flags._cache["t"] = 0
+    return {"sarvam_keys_loaded": len(sarvam.keys())}
 
 
 @app.post("/admin/seed-partner-b")

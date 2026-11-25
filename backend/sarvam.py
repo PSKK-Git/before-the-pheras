@@ -81,8 +81,40 @@ _latencies: deque = deque(maxlen=200)
 simulate = {"on": False, "scope": "voice"}
 
 
+usage = {"stt": 0, "chat": 0, "tts": 0, "translate": 0, "key_rotations": 0}   # successful calls (credit watch)
+_key_idx = 0
+
+
+def keys() -> list:
+    """SARVAM_API_KEY may hold several comma-separated keys; we fail over when one runs out of credit."""
+    return [k.strip() for k in os.getenv("SARVAM_API_KEY", "").split(",") if k.strip()]
+
+
+def current_key() -> str:
+    ks = keys()
+    return ks[_key_idx % len(ks)] if ks else ""
+
+
+def _rotate() -> bool:
+    global _key_idx
+    if len(keys()) > 1:
+        _key_idx = (_key_idx + 1) % len(keys())
+        usage["key_rotations"] += 1
+        return True
+    return False
+
+
+def reset_keys():
+    global _key_idx
+    _key_idx = 0
+
+
+def _is_key_error(e) -> bool:
+    return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (401, 402, 403, 429)
+
+
 def configured() -> bool:
-    return bool(os.getenv("SARVAM_API_KEY"))
+    return bool(keys())
 
 
 def p95_latency_ms():
@@ -92,7 +124,7 @@ def p95_latency_ms():
 
 
 def _headers():
-    return {"api-subscription-key": os.getenv("SARVAM_API_KEY", "")}
+    return {"api-subscription-key": current_key()}
 
 
 def _call(op: str, fn):
@@ -101,19 +133,26 @@ def _call(op: str, fn):
         raise SarvamError("SARVAM_API_KEY not set")
     breaker.allow()
     last = None
-    for attempt in range(2):
+    tries = rotations = 0
+    while tries < 2:
         t0 = time.time()
         try:
             if simulate["on"] and (simulate["scope"] == "all" or op in ("stt", "tts")):
                 raise SarvamError("simulated failure")
             out = fn()
             _latencies.append(time.time() - t0)
+            usage[op] += 1
             breaker.success()
             return out
         except Exception as e:
             last = e
+            # out of credit / rate-limited key: switch to the next key without counting a failure
+            if _is_key_error(e) and rotations < len(keys()) - 1 and _rotate():
+                rotations += 1
+                continue
             error_counts[op] += 1
-            if attempt == 0:
+            tries += 1
+            if tries < 2:
                 time.sleep(0.4)
     breaker.failure()
     raise SarvamError(f"{op} failed: {type(last).__name__}")
@@ -139,7 +178,7 @@ def chat(system: str, user: str, max_tokens: int = 700) -> str:
     def go():
         r = httpx.post(
             f"{BASE}/v1/chat/completions",
-            headers={**_headers(), "Authorization": f"Bearer {os.getenv('SARVAM_API_KEY', '')}"},
+            headers={**_headers(), "Authorization": f"Bearer {current_key()}"},
             json={
                 "model": CHAT_MODEL,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -155,7 +194,19 @@ def chat(system: str, user: str, max_tokens: int = 700) -> str:
     return _call("chat", go)
 
 
+_tts_cache: dict = {}   # same text+language is never paid for twice
+
+
 def tts(text: str, language: str) -> bytes:
+    if (text, language) in _tts_cache:
+        return _tts_cache[(text, language)]
+    audio = _tts_call(text, language)
+    if text != "probe":
+        _tts_cache[(text, language)] = audio
+    return audio
+
+
+def _tts_call(text: str, language: str) -> bytes:
     def go():
         r = httpx.post(
             f"{BASE}/text-to-speech",
