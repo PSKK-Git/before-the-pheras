@@ -549,12 +549,24 @@ def standin_approve():
     Preferred path: flip `voice_mode` in Flagsmith via its Admin API, so the change is visible in the
     Flagsmith dashboard and audit log. Without an admin key, fall back to the labelled local override."""
     _demo_guard()
-    via = "flagsmith" if flags.admin_set_flag("voice_mode", False) == "ok" else "local"
-    if via == "local":
-        flags.ops_override(True)
-    incident.update(self_heal=True, runbook_via=via)
+    # Instant effect locally, then publish the real flag change in Flagsmith in the background
+    # (its admin API takes a few seconds). The Ops screen shows "flipped in Flagsmith" once it lands.
+    flags.ops_override(True)
+    incident.update(self_heal=True, runbook_via="local")
     if standin_inbox:
-        standin_inbox[0].update(runbook_approved=True, runbook_via=via)
+        standin_inbox[0].update(runbook_approved=True, runbook_via="local")
+
+    def flip():
+        if flags.admin_set_flag("voice_mode", False) != "ok":
+            return
+        if not incident.get("self_heal"):          # recovered while the publish was in flight: undo it
+            flags.admin_set_flag("voice_mode", True)
+            return
+        incident["runbook_via"] = "flagsmith"
+        if standin_inbox:
+            standin_inbox[0]["runbook_via"] = "flagsmith"
+    if flags.admin_configured():
+        threading.Thread(target=flip, daemon=True).start()
     return ready()
 
 

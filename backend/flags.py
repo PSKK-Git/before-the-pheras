@@ -354,15 +354,24 @@ def admin_set_flag(name: str, enabled: bool) -> str:
     env = os.environ["FLAGSMITH_ENV_CLIENT_KEY"].strip()
     h = {"Authorization": f"Api-Key {os.environ['FLAGSMITH_ADMIN_API_KEY'].strip()}"}
     try:
-        with httpx.Client(base_url=ADMIN_BASE, headers=h, timeout=6) as s:
+        with httpx.Client(base_url=ADMIN_BASE, headers=h, timeout=20) as s:   # admin API calls take ~1-5 s
+            info = s.get(f"/environments/{env}/").raise_for_status().json()
             if name not in _feature_ids:
-                project = s.get(f"/environments/{env}/").raise_for_status().json()["project"]
-                feats = s.get(f"/projects/{project}/features/", params={"search": name}).raise_for_status().json()
+                feats = s.get(f"/projects/{info['project']}/features/", params={"search": name}).raise_for_status().json()
                 _feature_ids[name] = next(f["id"] for f in feats["results"] if f["name"] == name)
-            states = s.get(f"/environments/{env}/featurestates/",
-                           params={"feature": _feature_ids[name]}).raise_for_status().json()["results"]
-            fs = next(x for x in states if not x.get("feature_segment") and not x.get("identity"))
-            s.patch(f"/environments/{env}/featurestates/{fs['id']}/", json={"enabled": enabled}).raise_for_status()
+            fid = _feature_ids[name]
+            if info.get("use_v2_feature_versioning"):
+                # Versioned environments reject direct edits: publish a new feature version instead
+                # (it shows in the feature's History tab and the audit log).
+                s.post(f"/environments/{info['id']}/features/{fid}/versions/", json={
+                    "publish_immediately": True,
+                    "feature_states_to_update": [{"feature_segment": None, "enabled": enabled,
+                                                  "feature_state_value": {"type": "unicode", "string_value": ""}}],
+                }).raise_for_status()
+            else:
+                states = s.get(f"/environments/{env}/featurestates/", params={"feature": fid}).raise_for_status().json()["results"]
+                fs = next(x for x in states if not x.get("feature_segment") and not x.get("identity"))
+                s.patch(f"/environments/{env}/featurestates/{fs['id']}/", json={"enabled": enabled}).raise_for_status()
     except Exception as e:
         status["admin_error"] = getattr(getattr(e, "response", None), "status_code", None) or type(e).__name__
         log.warning("flagsmith admin set %s failed: %s", name, status["admin_error"])
