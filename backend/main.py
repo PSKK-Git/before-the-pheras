@@ -478,6 +478,38 @@ def seed_partner_b(session_id: str, x_participant_token: str | None = Header(Non
     return {"seeded": True, "synthetic": True}
 
 
+# --- NudgeBee LOCAL STAND-IN (demo only) ------------------------------------------------------
+# NudgeBee self-serve signup was unavailable and no inbound alert API is publicly documented, so
+# NUDGEBEE_WEBHOOK_URL can point here. It receives the same content-free payload a real NudgeBee
+# endpoint would, and mimics NudgeBee's approval-gated runbook step. Swap the URL to go live.
+standin_inbox: list = []
+
+
+@app.post("/ops/nudgebee-standin")
+def standin_receive(payload: dict):
+    _demo_guard()
+    standin_inbox.insert(0, {**payload, "received_at": time.time(), "runbook_approved": False})
+    del standin_inbox[20:]
+    return {"received": True, "standin": True}
+
+
+@app.get("/ops/nudgebee-standin")
+def standin_list():
+    _demo_guard()
+    return {"standin": True, "webhook_url": os.getenv("NUDGEBEE_WEBHOOK_URL", ""), "incidents": standin_inbox}
+
+
+@app.post("/ops/nudgebee-standin/approve")
+def standin_approve():
+    """Operator approves the suggested runbook: voice off, text on (cleared when the breaker closes)."""
+    _demo_guard()
+    flags.ops_override(True)
+    incident["self_heal"] = True
+    if standin_inbox:
+        standin_inbox[0]["runbook_approved"] = True
+    return ready()
+
+
 # optional: serve the built frontend from the same origin
 _dist = Path(__file__).parent.parent / "frontend" / "dist"
 if _dist.exists():

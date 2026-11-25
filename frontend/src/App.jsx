@@ -53,7 +53,7 @@ function Shell({ children, cfg, onAbout, right }) {
   )
 }
 
-function About({ onClose, onDelete, cfg }) {
+function About({ onClose, onDelete, cfg, onOps }) {
   return (
     <div className="fixed inset-0 z-10 flex items-end justify-center bg-black/30 p-4 sm:items-center" onClick={onClose}>
       <div className="card max-h-[85vh] w-full max-w-lg overflow-auto" onClick={(e) => e.stopPropagation()}>
@@ -70,8 +70,65 @@ function About({ onClose, onDelete, cfg }) {
         {cfg && <p className="mb-4 text-xs text-muted">Config source: {cfg.source}{cfg.override_active ? ' · local fallback override active' : ''} · Sarvam: {cfg.sarvam}</p>}
         <div className="flex justify-between gap-2">
           {onDelete ? <button className="btn btn-ghost text-burgundy" onClick={onDelete}>Delete session &amp; all data</button> : <span />}
-          <button className="btn btn-primary" onClick={onClose}>Close</button>
+          <div className="flex gap-2">
+            <button className="btn btn-ghost text-sm" onClick={onOps}>Ops demo</button>
+            <button className="btn btn-primary" onClick={onClose}>Close</button>
+          </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/* ---------- ops: Sarvam health -> breaker -> NudgeBee (local stand-in) -> runbook ---------- */
+function Ops({ onBack }) {
+  const [ready, setReady] = useState(null)
+  const [inbox, setInbox] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const load = useCallback(async () => {
+    try { setReady(await api('/ready')) } catch {}
+    try { setInbox(await api('/ops/nudgebee-standin')) } catch { setInbox({ incidents: [] }) }
+  }, [])
+  useEffect(() => { load(); const t = setInterval(load, 2000); return () => clearInterval(t) }, [load])
+  const act = async (path, json) => { setBusy(true); try { await api(path, { method: 'POST', json }) } catch {} setBusy(false); load() }
+  const ok = ready?.breaker_state === 'closed'
+  const fmt = (t) => new Date(t * 1000).toLocaleTimeString()
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="font-serif text-2xl text-burgundy">Ops &amp; incident demo</h1>
+        <button className="btn btn-ghost text-sm" onClick={onBack}>← Back</button>
+      </div>
+      <div className="card space-y-2 text-sm">
+        <div className="flex flex-wrap gap-2">
+          <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${ok ? 'border-sage/40 bg-sage-soft text-sage' : 'border-burgundy/30 bg-burgundy-soft text-burgundy'}`}>Sarvam: {ready?.sarvam ?? '…'}</span>
+          <span className="rounded-full border px-3 py-1 text-xs">Breaker: {ready?.breaker_state ?? '…'}</span>
+          <span className="rounded-full border px-3 py-1 text-xs">Flagsmith: {ready?.flagsmith ?? '…'}</span>
+          <span className="rounded-full border px-3 py-1 text-xs">Incident signal: {ready?.incident?.nudgebee_signal ?? '—'}</span>
+          {ready?.incident?.self_heal && <span className="rounded-full border border-gold/40 bg-gold-soft px-3 py-1 text-xs text-[#8a6a2c]">Runbook applied: text mode</span>}
+        </div>
+        {ready?.simulated_failure && <p className="text-xs text-muted">Failure is <b>simulated</b> for this demo; no real outage.</p>}
+        <div className="flex gap-2 pt-1">
+          <button className="btn btn-primary text-sm" disabled={busy} onClick={() => act('/admin/simulate-sarvam-failure', { on: true, scope: 'voice' })}>Simulate Sarvam voice failure</button>
+          <button className="btn btn-ghost text-sm" disabled={busy} onClick={() => act('/admin/simulate-sarvam-failure', { on: false })}>Recover</button>
+        </div>
+      </div>
+      <div className="card text-sm">
+        <h2 className="mb-1 font-serif text-lg text-burgundy">NudgeBee inbox <span className="font-sans text-xs text-muted">(local stand-in)</span></h2>
+        <p className="mb-3 text-xs text-muted">NudgeBee signup was unavailable, so incident signals go to a local receiver with the same content-free payload. Point NUDGEBEE_WEBHOOK_URL at a real NudgeBee endpoint to go live.</p>
+        {!inbox?.incidents?.length && <p className="text-muted">No incidents received.</p>}
+        {inbox?.incidents?.map((i, n) => (
+          <div key={n} className="mb-2 rounded-xl border p-3">
+            <div className="flex justify-between gap-2"><b>{i.summary}</b><span className="text-xs text-muted">{fmt(i.received_at)}</span></div>
+            <div className="text-xs text-muted">{i.event} · {i.severity} · {i.labels?.service} → {i.labels?.dependency} · errors {JSON.stringify(i.detail?.error_counts)}</div>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <span className="text-xs">Suggested runbook: {i.suggested_runbook}</span>
+              {n === 0 && (i.runbook_approved
+                ? <span className="text-xs text-sage">✓ approved</span>
+                : <button className="btn btn-primary !px-3 !py-1 text-xs" disabled={busy || ok} onClick={() => act('/ops/nudgebee-standin/approve')}>Approve runbook</button>)}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -370,10 +427,10 @@ export default function App() {
   // flags are polled every 3 s so a Flagsmith dashboard change shows up without reload
   useEffect(() => {
     let alive = true
-    const tick = async () => { try { const c = await api('/config'); if (alive) setCfg(c) } catch {} }
+    const tick = async () => { try { const c = await api('/config', { token: session?.token }); if (alive) setCfg(c) } catch {} }
     tick(); const t = setInterval(tick, 3000)
     return () => { alive = false; clearInterval(t) }
-  }, [])
+  }, [session?.token])
 
   const refresh = useCallback(async () => {
     if (!session) return
@@ -414,10 +471,11 @@ export default function App() {
       {cfg && cfg.sarvam === 'degraded' && cfg.voice_mode && (
         <p className="mb-4 rounded-xl bg-gold-soft p-3 text-sm text-[#8a6a2c]">Voice is having trouble. You can keep going by typing. Nothing you have answered is lost.</p>
       )}
-      {!session && <Landing cfg={cfg} onJoined={joined} />}
-      {session && screen === 'interview' && me && <Interview session={session} cfg={cfg} me={me} refresh={refresh} goMap={() => setScreen('map')} speak={speak} />}
-      {session && screen === 'map' && <MapView session={session} cfg={cfg} speak={speak} goInterview={() => setScreen('interview')} />}
-      {about && <About cfg={cfg} onClose={() => setAbout(false)} onDelete={session ? del : null} />}
+      {screen === 'ops' && <Ops onBack={() => setScreen(session ? 'interview' : 'landing')} />}
+      {screen !== 'ops' && !session && <Landing cfg={cfg} onJoined={joined} />}
+      {screen !== 'ops' && session && screen === 'interview' && me && <Interview session={session} cfg={cfg} me={me} refresh={refresh} goMap={() => setScreen('map')} speak={speak} />}
+      {screen !== 'ops' && session && screen === 'map' && <MapView session={session} cfg={cfg} speak={speak} goInterview={() => setScreen('interview')} />}
+      {about && <About cfg={cfg} onClose={() => setAbout(false)} onDelete={session ? del : null} onOps={() => { setAbout(false); setScreen('ops') }} />}
     </Shell>
   )
 }
