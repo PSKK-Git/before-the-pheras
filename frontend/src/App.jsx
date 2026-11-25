@@ -449,13 +449,18 @@ function Interview({ session, cfg, me, refresh, goMap, speak }) {
     } finally { setBusy(false) }
   }
 
+  // Keep one microphone stream open for the whole interview. Releasing the mic after every answer
+  // made macOS stop a screen recording that shares the same microphone.
+  const micRef = useRef(null)
+  useEffect(() => () => { micRef.current?.getTracks().forEach((t) => t.stop()) }, [])
   const startRec = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mr = new MediaRecorder(stream)
+      const live = micRef.current?.getAudioTracks().some((t) => t.readyState === 'live')
+      if (!live) micRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mr = new MediaRecorder(micRef.current)
       chunks.current = []
       mr.ondataavailable = (e) => chunks.current.push(e.data)
-      mr.onstop = () => { stream.getTracks().forEach((t) => t.stop()); send({ audio: new Blob(chunks.current, { type: mr.mimeType || 'audio/webm' }) }) }
+      mr.onstop = () => { send({ audio: new Blob(chunks.current, { type: mr.mimeType || 'audio/webm' }) }) }
       mr.start(); setRec(mr)
     } catch { setNote('Microphone unavailable. Please type your answer.') }
   }
